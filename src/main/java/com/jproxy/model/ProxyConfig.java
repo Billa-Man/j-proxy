@@ -34,6 +34,18 @@ public class ProxyConfig {
     @JsonProperty("cache_methods")
     private Set<String> cacheMethods = new HashSet<>(Arrays.asList("GET", "HEAD"));
 
+    @JsonProperty("rate_limit_enabled")
+    private boolean rateLimitEnabled = false;
+
+    @JsonProperty("rate_limit_max_requests")
+    private int rateLimitMaxRequests = 60;
+
+    @JsonProperty("rate_limit_window_seconds")
+    private long rateLimitWindowSeconds = 60;
+
+    @JsonProperty("rate_limit_key_strategy")
+    private String rateLimitKeyStrategy = "url"; // "url", "ip", or "url+ip"
+
     public ProxyConfig() {
     }
 
@@ -103,5 +115,37 @@ public class ProxyConfig {
 
     public boolean shouldCache(String method) {
         return cacheEnabled && cacheMethods.contains(method.toUpperCase());
+    }
+
+    public boolean isRateLimitEnabled() {
+        return rateLimitEnabled;
+    }
+
+    public void setRateLimitEnabled(boolean rateLimitEnabled) {
+        this.rateLimitEnabled = rateLimitEnabled;
+    }
+
+    public int getRateLimitMaxRequests() {
+        return rateLimitMaxRequests;
+    }
+
+    public void setRateLimitMaxRequests(int rateLimitMaxRequests) {
+        this.rateLimitMaxRequests = rateLimitMaxRequests;
+    }
+
+    public long getRateLimitWindowSeconds() {
+        return rateLimitWindowSeconds;
+    }
+
+    public void setRateLimitWindowSeconds(long rateLimitWindowSeconds) {
+        this.rateLimitWindowSeconds = rateLimitWindowSeconds;
+    }
+
+    public String getRateLimitKeyStrategy() {
+        return rateLimitKeyStrategy;
+    }
+
+    public void setRateLimitKeyStrategy(String rateLimitKeyStrategy) {
+        this.rateLimitKeyStrategy = rateLimitKeyStrategy;
     }
 }

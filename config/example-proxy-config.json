@@ -1,0 +1,8 @@
+{
+  "target_url": "https://jsonplaceholder.typicode.com",
+  "timeout": 30000,
+  "follow_redirects": true,
+  "headers": {
+    "User-Agent": "J-Proxy/1.0"
+  }
+}

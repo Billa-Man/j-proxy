@@ -1,0 +1,66 @@
+{
+  "endpoints": [
+    {
+      "path": "/users/123",
+      "method": "GET",
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "id": 123,
+          "name": "John Doe",
+          "email": "john@example.com",
+          "role": "admin"
+        }
+      }
+    },
+    {
+      "path": "/users",
+      "method": "GET",
+      "response": {
+        "status": 200,
+        "body": [
+          {"id": 1, "name": "Alice"},
+          {"id": 2, "name": "Bob"},
+          {"id": 3, "name": "Charlie"}
+        ]
+      }
+    },
+    {
+      "path": "/users",
+      "method": "POST",
+      "response": {
+        "status": 201,
+        "body": {
+          "id": 456,
+          "message": "User created successfully"
+        },
+        "delay": 100
+      }
+    },
+    {
+      "path": "/error",
+      "method": "GET",
+      "response": {
+        "status": 500,
+        "body": {
+          "error": "Internal Server Error",
+          "message": "Something went wrong"
+        }
+      }
+    },
+    {
+      "path": "/slow",
+      "method": "GET",
+      "response": {
+        "status": 200,
+        "body": {
+          "message": "This response was delayed"
+        },
+        "delay": 2000
+      }
+    }
+  ]
+}

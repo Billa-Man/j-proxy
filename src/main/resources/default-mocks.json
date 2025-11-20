@@ -1,0 +1,27 @@
+{
+  "endpoints": [
+    {
+      "path": "/",
+      "method": "GET",
+      "response": {
+        "status": 200,
+        "body": {
+          "message": "J-Proxy is running!",
+          "version": "1.0.0",
+          "mode": "mock"
+        }
+      }
+    },
+    {
+      "path": "/health",
+      "method": "GET",
+      "response": {
+        "status": 200,
+        "body": {
+          "status": "healthy",
+          "timestamp": "auto"
+        }
+      }
+    }
+  ]
+}

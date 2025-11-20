@@ -25,6 +25,8 @@ public class ProxyHandler {
     private final ProxyConfig config;
     private final Cache cache;
     private final RateLimiter rateLimiter;
+    private static final ThreadLocal<Boolean> cacheHitFlag = new ThreadLocal<>();
+    private static final ThreadLocal<Integer> responseStatusCode = new ThreadLocal<>();
 
     public ProxyHandler(ProxyConfig config) {
         this.config = config;
@@ -35,8 +37,12 @@ public class ProxyHandler {
                 : null;
 
         if (cache != null) {
-            logger.info("Cache enabled: max {} entries, TTL {}s",
-                    config.getCacheMaxSize(), config.getCacheTtlSeconds());
+            logger.info("Cache ENABLED: max {} entries, TTL {}s, methods: {}",
+                    config.getCacheMaxSize(),
+                    config.getCacheTtlSeconds(),
+                    config.getCacheMethods());
+        } else {
+            logger.info("Cache DISABLED");
         }
 
         if (rateLimiter != null) {
@@ -48,26 +54,28 @@ public class ProxyHandler {
     }
 
     public void handle(HttpExchange exchange) throws IOException {
+        // Clear flags at start
+        cacheHitFlag.set(false);
+        responseStatusCode.set(200);
+
         HttpRequest request = buildRequest(exchange);
 
         // Check rate limit first
+        RateLimiter.RateLimitResult rateLimitResult = null;
         if (rateLimiter != null) {
             String rateLimitKey = buildRateLimitKey(exchange, request);
-            RateLimiter.RateLimitResult rateLimitResult = rateLimiter.allowRequest(rateLimitKey);
+            rateLimitResult = rateLimiter.allowRequest(rateLimitKey);
+
+            logger.info("Rate limit check: key={}, allowed={}, remaining={}/{}",
+                    rateLimitKey, rateLimitResult.isAllowed(),
+                    rateLimitResult.getRemaining(), rateLimitResult.getLimit());
 
             if (!rateLimitResult.isAllowed()) {
                 logger.warn("Rate limit exceeded for key: {}", rateLimitKey);
                 sendRateLimitExceeded(exchange, rateLimitResult);
+                responseStatusCode.set(429);
                 return;
             }
-
-            // Add rate limit headers to response
-            exchange.getResponseHeaders().set("X-RateLimit-Limit",
-                    String.valueOf(rateLimitResult.getLimit()));
-            exchange.getResponseHeaders().set("X-RateLimit-Remaining",
-                    String.valueOf(rateLimitResult.getRemaining()));
-            exchange.getResponseHeaders().set("X-RateLimit-Reset",
-                    String.valueOf(rateLimitResult.getResetAt()));
         }
 
         // Check cache
@@ -78,20 +86,23 @@ public class ProxyHandler {
 
             if (cachedResponse != null) {
                 logger.info("Serving from cache: {} {}", request.getMethod(), request.getUrl());
-                sendResponse(exchange, cachedResponse, true);
+                cacheHitFlag.set(true);
+                responseStatusCode.set(cachedResponse.getStatusCode());
+                sendResponse(exchange, cachedResponse, true, rateLimitResult);
                 return;
             }
         }
 
         try {
             HttpResponse response = HttpUtil.executeRequest(request, config.getTimeout());
+            responseStatusCode.set(response.getStatusCode());
 
             if (cacheKey != null && shouldCacheResponse(response)) {
                 long ttlMillis = config.getCacheTtlSeconds() * 1000L;
                 cache.put(cacheKey, response, ttlMillis);
             }
 
-            sendResponse(exchange, response, false);
+            sendResponse(exchange, response, false, rateLimitResult);
 
             logger.info("Proxied {} {} -> {}",
                     request.getMethod(),
@@ -100,6 +111,7 @@ public class ProxyHandler {
 
         } catch (IOException e) {
             logger.error("Failed to proxy request to {}", request.getUrl(), e);
+            responseStatusCode.set(502);
             sendError(exchange, 502, "Bad Gateway: " + e.getMessage());
         }
     }
@@ -165,30 +177,52 @@ public class ProxyHandler {
         return url;
     }
 
-    private void sendResponse(HttpExchange exchange, HttpResponse response, boolean fromCache) throws IOException {
+    private void sendResponse(HttpExchange exchange, HttpResponse response, boolean fromCache,
+            RateLimiter.RateLimitResult rateLimitResult) throws IOException {
         Headers responseHeaders = exchange.getResponseHeaders();
+
+        // Set response headers from proxied response
         for (Map.Entry<String, String> entry : response.getHeaders().entrySet()) {
             responseHeaders.set(entry.getKey(), entry.getValue());
         }
 
+        // Add proxy signature
         responseHeaders.set("X-Proxied-By", "J-Proxy");
+
+        // Add cache header
         if (fromCache) {
             responseHeaders.set("X-Cache", "HIT");
         } else {
             responseHeaders.set("X-Cache", "MISS");
         }
 
+        // Add rate limit headers if rate limiting is enabled
+        if (rateLimitResult != null) {
+            responseHeaders.set("X-RateLimit-Limit", String.valueOf(rateLimitResult.getLimit()));
+            responseHeaders.set("X-RateLimit-Remaining", String.valueOf(rateLimitResult.getRemaining()));
+            responseHeaders.set("X-RateLimit-Reset", String.valueOf(rateLimitResult.getResetAt()));
+        }
+
+        // Send response
         byte[] body = response.getBody();
         int contentLength = (body != null) ? body.length : 0;
 
         exchange.sendResponseHeaders(response.getStatusCode(), contentLength);
 
-        if (contentLength > 0) {
-            OutputStream os = exchange.getResponseBody();
-            os.write(body);
-            os.close();
-        } else {
-            exchange.getResponseBody().close();
+        // Only write and close if there's a body
+        OutputStream os = exchange.getResponseBody();
+        try {
+            if (contentLength > 0) {
+                os.write(body);
+            }
+        } finally {
+            // Always close the output stream in a finally block
+            try {
+                os.close();
+            } catch (IOException e) {
+                // Ignore close errors - connection might already be closed
+                logger.debug("Error closing response stream (safe to ignore): {}", e.getMessage());
+            }
         }
     }
 
@@ -198,8 +232,17 @@ public class ProxyHandler {
 
         exchange.getResponseHeaders().set("Content-Type", "application/json");
         exchange.sendResponseHeaders(statusCode, errorBytes.length);
-        exchange.getResponseBody().write(errorBytes);
-        exchange.getResponseBody().close();
+
+        OutputStream os = exchange.getResponseBody();
+        try {
+            os.write(errorBytes);
+        } finally {
+            try {
+                os.close();
+            } catch (IOException e) {
+                logger.debug("Error closing error stream (safe to ignore): {}", e.getMessage());
+            }
+        }
     }
 
     private byte[] readAllBytes(InputStream is) throws IOException {
@@ -259,11 +302,38 @@ public class ProxyHandler {
         exchange.getResponseHeaders().set("Retry-After", String.valueOf(result.getRetryAfter()));
 
         exchange.sendResponseHeaders(429, errorBytes.length);
-        exchange.getResponseBody().write(errorBytes);
-        exchange.getResponseBody().close();
+
+        OutputStream os = exchange.getResponseBody();
+        try {
+            os.write(errorBytes);
+        } finally {
+            try {
+                os.close();
+            } catch (IOException e) {
+                logger.debug("Error closing rate limit stream (safe to ignore): {}", e.getMessage());
+            }
+        }
     }
 
     public RateLimiter.RateLimitStats getRateLimitStats(String key) {
         return rateLimiter != null ? rateLimiter.getStats(key) : null;
+    }
+
+    public static boolean wasCacheHit() {
+        Boolean hit = cacheHitFlag.get();
+        return hit != null && hit;
+    }
+
+    public static void clearCacheFlag() {
+        cacheHitFlag.remove();
+    }
+
+    public static int getLastStatusCode() {
+        Integer status = responseStatusCode.get();
+        return status != null ? status : 200;
+    }
+
+    public static void clearStatusCode() {
+        responseStatusCode.remove();
     }
 }

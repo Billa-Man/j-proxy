@@ -1,37 +1,46 @@
 #!/bin/bash
 
-echo "Testing rate limiting..."
-echo "Configured: 10 requests per 60 seconds"
+echo "=========================================="
+echo "Testing J-Proxy: Rate Limiting"
+echo "=========================================="
 echo ""
+echo "Make sure server is running in PROXY mode"
+echo "with RATE LIMITING ENABLED"
+echo "Example config: 10 requests per 60 seconds"
+echo ""
+echo "Press Enter to continue or Ctrl+C to cancel"
+read
 
-URL="http://localhost:8080/posts/1"
+BASE_URL="http://localhost:8080"
+ENDPOINT="/posts/1"
 
-# Check if server is running
-if ! curl -s -o /dev/null "$URL" 2>&1; then
-    echo "Error: Server not running at $URL"
-    echo "Start with: java -jar target/j-proxy-1.0.0.jar --mode proxy --config config/proxy-config.json"
-    exit 1
-fi
+echo ""
+echo "Sending rapid requests to trigger rate limit..."
+echo "-----------------------------------"
 
-for i in {1..15}; do
+for i in {1..20}; do
+    response=$(curl -s -w "\nHTTP_CODE:%{http_code}" "$BASE_URL$ENDPOINT")
+    http_code=$(echo "$response" | grep "HTTP_CODE" | cut -d: -f2)
+    
     echo -n "Request $i: "
     
-    # Make request and capture headers
-    headers=$(curl -s -I "$URL" 2>&1)
-    http_code=$(echo "$headers" | grep -i "^HTTP" | tail -n 1 | awk '{print $2}')
-    
-    if [ "$http_code" = "200" ]; then
-        remaining=$(echo "$headers" | grep -i "x-ratelimit-remaining" | awk -F': ' '{print $2}' | tr -d '\r')
+    if [ "$http_code" == "200" ]; then
+        remaining=$(curl -s -I "$BASE_URL$ENDPOINT" 2>&1 | grep -i "x-ratelimit-remaining" | awk -F': ' '{print $2}' | tr -d '\r')
         echo "✓ Success (Remaining: $remaining)"
-    elif [ "$http_code" = "429" ]; then
-        retry_after=$(echo "$headers" | grep -i "retry-after" | awk -F': ' '{print $2}' | tr -d '\r')
+    elif [ "$http_code" == "429" ]; then
+        retry_after=$(curl -s -I "$BASE_URL$ENDPOINT" 2>&1 | grep -i "retry-after" | awk -F': ' '{print $2}' | tr -d '\r')
         echo "✗ Rate Limited (Retry after: ${retry_after}s)"
     else
         echo "? Unknown status: $http_code"
     fi
     
-    sleep 0.5
+    sleep 0.3
 done
 
 echo ""
-echo "Check stats at: http://localhost:8080/__stats"
+echo "=========================================="
+echo "Test complete! You should see:"
+echo "- First 10 requests: Success"
+echo "- Remaining requests: Rate Limited"
+echo "- Wait 60 seconds for reset"
+echo "=========================================="

@@ -10,6 +10,8 @@ import java.io.File;
 import java.io.IOException;
 import java.util.concurrent.Callable;
 
+import javax.swing.SwingUtilities;
+
 @Command(name = "jproxy", mixinStandardHelpOptions = true, version = "J-Proxy 1.0.0", description = "HTTP Proxy and Mock Server")
 public class Main implements Callable<Integer> {
 
@@ -27,6 +29,9 @@ public class Main implements Callable<Integer> {
     @Option(names = { "-t", "--target" }, description = "Target URL for proxy mode (e.g., https://api.example.com)")
     private String targetUrl;
 
+    @Option(names = { "-g", "--gui" }, description = "Start with GUI dashboard")
+    private boolean guiMode;
+
     public static void main(String[] args) {
         int exitCode = new CommandLine(new Main()).execute(args);
         System.exit(exitCode);
@@ -35,27 +40,36 @@ public class Main implements Callable<Integer> {
     @Override
     public Integer call() {
         try {
+            if (guiMode) {
+                logger.info("Starting Swing GUI dashboard");
+                SwingUtilities.invokeLater(() -> {
+                    com.jproxy.gui.swing.DashboardFrame frame = new com.jproxy.gui.swing.DashboardFrame();
+                    frame.setVisible(true);
+                });
+
+                // Keep main thread alive
+                Thread.currentThread().join();
+                return 0;
+            }
+
             logger.info("Starting J-Proxy v1.0.0");
             logger.info("Mode: {}", mode);
             logger.info("Port: {}", port);
-
             if (targetUrl != null) {
                 logger.info("Target: {}", targetUrl);
             }
 
-            // Create temporary config if target URL is provided
             String effectiveConfigPath = configPath;
             if (targetUrl != null && "proxy".equalsIgnoreCase(mode)) {
                 effectiveConfigPath = createTempProxyConfig(targetUrl);
             }
 
-            ProxyServer server = new ProxyServer(port, mode, configPath);
+            ProxyServer server = new ProxyServer(port, mode, effectiveConfigPath);
             server.start();
 
             logger.info("Server started successfully on port {}", port);
             logger.info("Press Ctrl+C to stop");
 
-            // Keep running
             Thread.currentThread().join();
 
             return 0;

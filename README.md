@@ -12,6 +12,10 @@ A lightweight HTTP proxy and mock server written in Java. Perfect for developmen
 - **Statistics**: Real-time cache and rate limit metrics
 
 ## Quick Start
+```bash
+mvn clean package
+java -jar target/j-proxy-1.0.0.jar --gui
+```
 
 ### Build
 ```bash

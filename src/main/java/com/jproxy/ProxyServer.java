@@ -1,6 +1,7 @@
 package com.jproxy;
 
 import com.jproxy.handler.RequestHandler;
+import com.jproxy.handler.StatsHandler;
 import com.sun.net.httpserver.HttpServer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,19 +26,21 @@ public class ProxyServer {
     }
 
     public void start() throws IOException {
-        // Create HTTP server
         server = HttpServer.create(new InetSocketAddress(port), 0);
         
-        // Create request handler
         RequestHandler handler = new RequestHandler(mode, configPath);
         
-        // Set up context (all paths go to same handler)
+        // Main handler for all requests
         server.createContext("/", handler);
         
-        // Use thread pool for handling requests
-        server.setExecutor(Executors.newFixedThreadPool(10));
+        // Stats endpoint (only in proxy mode)
+        if ("proxy".equalsIgnoreCase(mode) && handler.getProxyHandler() != null) {
+            StatsHandler statsHandler = new StatsHandler(handler.getProxyHandler());
+            server.createContext("/__stats", statsHandler);
+            logger.info("Stats endpoint available at /__stats");
+        }
         
-        // Start server
+        server.setExecutor(Executors.newFixedThreadPool(10));
         server.start();
         
         logger.info("HTTP server bound to port {}", port);

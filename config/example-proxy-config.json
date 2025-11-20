@@ -4,5 +4,9 @@
   "follow_redirects": true,
   "headers": {
     "User-Agent": "J-Proxy/1.0"
-  }
+  },
+  "cache_enabled": true,
+  "cache_max_size": 100,
+  "cache_ttl_seconds": 300,
+  "cache_methods": ["GET", "HEAD"]
 }

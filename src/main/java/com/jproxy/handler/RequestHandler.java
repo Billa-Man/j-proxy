@@ -11,23 +11,23 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 
 public class RequestHandler implements HttpHandler {
-    
+
     private static final Logger logger = LoggerFactory.getLogger(RequestHandler.class);
-    
+
     private final String mode;
     private final MockHandler mockHandler;
     private final ProxyHandler proxyHandler;
 
     public RequestHandler(String mode, String configPath) {
         this.mode = mode;
-        
+
         if ("mock".equalsIgnoreCase(mode)) {
             try {
                 MockConfig mockConfig = Config.loadMockConfig(configPath);
                 this.mockHandler = new MockHandler(mockConfig);
                 this.proxyHandler = null;
-                logger.info("Mock handler initialized with {} endpoints", 
-                    mockConfig.getEndpoints().size());
+                logger.info("Mock handler initialized with {} endpoints",
+                        mockConfig.getEndpoints().size());
             } catch (IOException e) {
                 logger.error("Failed to load mock config", e);
                 throw new RuntimeException("Failed to initialize mock handler", e);
@@ -37,8 +37,8 @@ public class RequestHandler implements HttpHandler {
                 ProxyConfig proxyConfig = Config.loadProxyConfig(configPath);
                 this.proxyHandler = new ProxyHandler(proxyConfig);
                 this.mockHandler = null;
-                String target = proxyConfig.getTargetUrl() != null ? 
-                    proxyConfig.getTargetUrl() : "httpbin.org (default)";
+                String target = proxyConfig.getTargetUrl() != null ? proxyConfig.getTargetUrl()
+                        : "httpbin.org (default)";
                 logger.info("Proxy handler initialized, target: {}", target);
             } catch (IOException e) {
                 logger.error("Failed to load proxy config", e);
@@ -54,9 +54,9 @@ public class RequestHandler implements HttpHandler {
     public void handle(HttpExchange exchange) throws IOException {
         String method = exchange.getRequestMethod();
         String path = exchange.getRequestURI().getPath();
-        
+
         logger.info("==> Incoming {} {}", method, path);
-        
+
         try {
             if ("mock".equalsIgnoreCase(mode)) {
                 mockHandler.handle(exchange);
@@ -70,14 +70,18 @@ public class RequestHandler implements HttpHandler {
             sendError(exchange, 500, "Internal server error: " + e.getMessage());
         }
     }
-    
+
     private void sendError(HttpExchange exchange, int statusCode, String message) throws IOException {
         String errorBody = String.format("{\"error\":\"%s\"}", message);
         byte[] errorBytes = errorBody.getBytes();
-        
+
         exchange.getResponseHeaders().set("Content-Type", "application/json");
         exchange.sendResponseHeaders(statusCode, errorBytes.length);
         exchange.getResponseBody().write(errorBytes);
         exchange.getResponseBody().close();
+    }
+
+    public ProxyHandler getProxyHandler() {
+        return proxyHandler;
     }
 }

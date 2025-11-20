@@ -1,5 +1,6 @@
 package com.jproxy.handler;
 
+import com.jproxy.core.Cache;
 import com.jproxy.model.HttpRequest;
 import com.jproxy.model.HttpResponse;
 import com.jproxy.model.ProxyConfig;
@@ -21,21 +22,47 @@ public class ProxyHandler {
     private static final Logger logger = LoggerFactory.getLogger(ProxyHandler.class);
     
     private final ProxyConfig config;
+    private final Cache cache;
     
     public ProxyHandler(ProxyConfig config) {
         this.config = config;
+        this.cache = config.isCacheEnabled() ? 
+            new Cache(config.getCacheMaxSize()) : null;
+        
+        if (cache != null) {
+            logger.info("Cache enabled: max {} entries, TTL {}s", 
+                config.getCacheMaxSize(), config.getCacheTtlSeconds());
+        }
     }
     
     public void handle(HttpExchange exchange) throws IOException {
-        // Build request from incoming exchange
         HttpRequest request = buildRequest(exchange);
+        
+        // Check cache first
+        String cacheKey = null;
+        if (cache != null && config.shouldCache(request.getMethod())) {
+            cacheKey = buildCacheKey(request);
+            HttpResponse cachedResponse = cache.get(cacheKey);
+            
+            if (cachedResponse != null) {
+                logger.info("Serving from cache: {} {}", request.getMethod(), request.getUrl());
+                sendResponse(exchange, cachedResponse, true);
+                return;
+            }
+        }
         
         try {
             // Execute the proxied request
             HttpResponse response = HttpUtil.executeRequest(request, config.getTimeout());
             
+            // Cache the response if applicable
+            if (cacheKey != null && shouldCacheResponse(response)) {
+                long ttlMillis = config.getCacheTtlSeconds() * 1000L;
+                cache.put(cacheKey, response, ttlMillis);
+            }
+            
             // Send response back to client
-            sendResponse(exchange, response);
+            sendResponse(exchange, response, false);
             
             logger.info("Proxied {} {} -> {}", 
                 request.getMethod(), 
@@ -48,17 +75,25 @@ public class ProxyHandler {
         }
     }
     
+    private String buildCacheKey(HttpRequest request) {
+        // Cache key: METHOD:URL
+        return request.getMethod() + ":" + request.getUrl();
+    }
+    
+    private boolean shouldCacheResponse(HttpResponse response) {
+        int status = response.getStatusCode();
+        // Only cache successful responses
+        return status >= 200 && status < 300;
+    }
+    
     private HttpRequest buildRequest(HttpExchange exchange) throws IOException {
         HttpRequest request = new HttpRequest();
         
-        // Method
         request.setMethod(exchange.getRequestMethod());
         
-        // Build target URL
         String targetUrl = buildTargetUrl(exchange);
         request.setUrl(targetUrl);
         
-        // Headers
         Headers incomingHeaders = exchange.getRequestHeaders();
         for (Map.Entry<String, List<String>> entry : incomingHeaders.entrySet()) {
             if (!entry.getValue().isEmpty()) {
@@ -66,14 +101,12 @@ public class ProxyHandler {
             }
         }
         
-        // Add default headers from config
         for (Map.Entry<String, String> entry : config.getDefaultHeaders().entrySet()) {
             if (!request.getHeaders().containsKey(entry.getKey())) {
                 request.addHeader(entry.getKey(), entry.getValue());
             }
         }
         
-        // Body (if present)
         InputStream is = exchange.getRequestBody();
         if (is.available() > 0) {
             request.setBody(readAllBytes(is));
@@ -88,10 +121,9 @@ public class ProxyHandler {
         
         String baseUrl = config.getTargetUrl();
         if (baseUrl == null || baseUrl.isEmpty()) {
-            baseUrl = "http://httpbin.org"; // Default test target
+            baseUrl = "http://httpbin.org";
         }
         
-        // Remove trailing slash from base URL
         if (baseUrl.endsWith("/")) {
             baseUrl = baseUrl.substring(0, baseUrl.length() - 1);
         }
@@ -104,17 +136,19 @@ public class ProxyHandler {
         return url;
     }
     
-    private void sendResponse(HttpExchange exchange, HttpResponse response) throws IOException {
-        // Set response headers
+    private void sendResponse(HttpExchange exchange, HttpResponse response, boolean fromCache) throws IOException {
         Headers responseHeaders = exchange.getResponseHeaders();
         for (Map.Entry<String, String> entry : response.getHeaders().entrySet()) {
             responseHeaders.set(entry.getKey(), entry.getValue());
         }
         
-        // Add proxy signature
         responseHeaders.set("X-Proxied-By", "J-Proxy");
+        if (fromCache) {
+            responseHeaders.set("X-Cache", "HIT");
+        } else {
+            responseHeaders.set("X-Cache", "MISS");
+        }
         
-        // Send response
         byte[] body = response.getBody();
         int contentLength = (body != null) ? body.length : 0;
         
@@ -149,5 +183,9 @@ public class ProxyHandler {
         }
         
         return buffer.toByteArray();
+    }
+    
+    public Cache.CacheStats getCacheStats() {
+        return cache != null ? cache.getStats() : null;
     }
 }
